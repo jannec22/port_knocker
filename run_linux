@@ -1,0 +1,25 @@
+#!/bin/bash
+
+for ((i = 1; i <= $#; i++)); do
+    j=$((i + 1))
+    case "${!i}" in
+    -t) TARGET="${!j}" && shift 2 ;;
+    -d) WORKING_DIR="${!j}" || $(pwd) && shift 2 ;;
+    -h) echo "usage:  run_linux  -t <server|client>  -d [dir]  -- [... target args]" && exit -1 ;;
+    esac
+done
+
+[[ -z $TARGET || $TARGET -ne "server" || $TARGET -ne "client" ]] && echo "specify the script target <server|client>" && exit -1
+[[ -z $WORKING_DIR ]] && WORKING_DIR=$(pwd)
+
+echo "run: working directory: $WORKING_DIR"
+
+[[ ! -e "$WORKING_DIR/bin/$TARGET.jar" ]] && echo "it seems that you forgot to compile the code first" && exit -1
+
+[[ ! -e "$WORKING_DIR/sever.log" ]] && touch "$WORKING_DIR/sever.log"
+
+exec 3<&1
+coproc mytee { tee "$WORKING_DIR/$TARGET.log" >&3; }
+exec >&${mytee[1]} 2>&1
+
+java -jar "$WORKING_DIR/bin/$TARGET.jar" $@

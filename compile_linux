@@ -1,0 +1,50 @@
+#!/bin/bash
+
+usage(){
+	echo "usage:	./run_linux <client|server> [working dir]"
+	exit
+}
+
+TARGET=$1
+WORKING_DIR=$2
+[[ -z $TARGET ]] && usage
+[[ "$TARGET" -ne "client" && "$TARGET" -ne "server" ]] && usage
+[[ -z $WORKING_DIR ]] && WORKING_DIR=$(pwd)
+
+cd "$WORKING_DIR"
+
+echo "target: $TARGET"
+echo "build: working directory: $WORKING_DIR"
+rm -rf "$WORKING_DIR/bin/*"
+
+if [[ "$TARGET" == "server" ]]; then
+	echo "building test files (2, 16, 24, 64) MB"
+	dd if=/dev/zero of=2Mfile bs=2M count=1
+	dd if=/dev/zero of=16Mfile bs=16M count=1
+	dd if=/dev/zero of=24Mfile bs=24M count=1
+	dd if=/dev/zero of=64Mfile bs=64M count=1
+
+	echo "at least 2 MB file" >> 2Mfile
+	echo "at least 16 MB file" >> 16Mfile
+	echo "at least 24 MB file" >> 24Mfile
+	echo "at least 64 MB file" >> 64Mfile
+	
+	cd "$WORKING_DIR/Server/s18749"
+	
+	javac -d "$WORKING_DIR/bin" *.java
+	cp "../manifest.mf" "$WORKING_DIR/bin"
+	
+	cd "$WORKING_DIR/bin"
+	jar cmf manifest.mf server.jar *
+else
+	cd "$WORKING_DIR/Client/s18749"
+	
+	javac -d "$WORKING_DIR/bin" *.java
+	cp "../manifest.mf" "$WORKING_DIR/bin"
+	
+	cd "$WORKING_DIR/bin"
+	jar cmf manifest.mf client.jar *
+	
+fi
+
+rm -rf "$WORKING_DIR/bin/s18749/" "$WORKING_DIR/bin/manifest.mf"

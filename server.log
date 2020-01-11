@@ -1,0 +1,17 @@
+unlock sequence is: [1111, 2222]
+INFO: listening on port: 1111
+INFO: listening on port: 2222
+/127.0.0.1:55664 -> 1111 0
+/127.0.0.1:55664 -> 2222 1
+client origin: /127.0.0.1:55664
+sending file: image
+packing file
+
+file packed, chunks: 112
+preparing matadata packet: [B@3535fd9
+spawning ack listener
+spawning ack listener
+spawning ack listener
+file sent. size: 1131790, chunks: 113
+resending chunk: 112
+resending chunk: 112

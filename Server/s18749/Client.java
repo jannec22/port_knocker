@@ -16,22 +16,22 @@ import java.util.HashMap;
 public class Client implements Runnable {
 
     private static int PACKET_CHUNK_SIZE = 508;
-    private static int WINDOW_SIZE = 1000;
-    private static int WINDOW_GAP = 10; // ms
-    // private static String THE_FILE_NAME = "smallfile";
-    // private static String THE_FILE_NAME = "midfile";
-    // private static String THE_FILE_NAME = "bigfile";
-    private static String THE_FILE_NAME = "image";
-
+    private static int WINDOW_SIZE = 20; // packets per chunk
+    private int WINDOW_GAP = 10; // ms
+    
+    private String _fileName = "image";
     private File _file;
+    private boolean _lostPacket = false;
     private DatagramSocket _socket;
     private int _port;
     private String _host;
-    private InetAddress address;
+    private InetAddress _address;
     private HashMap<Integer, DatagramPacket[]> _chunks;
 
-    Client(String origin) throws SocketException {
+    Client(String origin, String fileName) throws SocketException {
         _socket = new DatagramSocket();
+        _fileName = fileName;
+        
         System.out.println("client origin: " + origin);
         String[] addr = origin.split(":");
 
@@ -43,7 +43,7 @@ public class Client implements Runnable {
         try {
             _host = addr[0].substring(1);
             _port = Integer.parseInt(addr[1]);
-            address = InetAddress.getByName(_host);
+            _address = InetAddress.getByName(_host);
 
         } catch (NumberFormatException e) {
             System.out.println("given client port is invalid");
@@ -58,11 +58,20 @@ public class Client implements Runnable {
         return _socket;
     }
 
+    public synchronized void onAck() {
+        if (_lostPacket) {
+            WINDOW_GAP /= 0.1;
+            _lostPacket = false;
+        }
+    }
+
     private DatagramPacket prepareMetadataPackage() {
-        byte[] metadata = (THE_FILE_NAME + "::" //
+        byte[] metadata = (_fileName + "::" //
                 + _file.length() + "::" //
-                + WINDOW_SIZE + "::" //
-                + PACKET_CHUNK_SIZE).getBytes();
+                + (Math.min(WINDOW_SIZE, (_file.length() / PACKET_CHUNK_SIZE) + 1)) + "::" //
+                + PACKET_CHUNK_SIZE + "::" //
+                + _chunks.size() //
+                ).getBytes();
         byte[] extracted = new byte[metadata.length + 8];
         System.out.println("preparing matadata packet: " + metadata);
 
@@ -74,7 +83,7 @@ public class Client implements Runnable {
             }
         }
 
-        return new DatagramPacket(extracted, extracted.length, address, _port);
+        return new DatagramPacket(extracted, extracted.length, _address, _port);
     }
 
     private DatagramPacket[] packChunk(byte[] bytes, int chunk) {
@@ -83,7 +92,7 @@ public class Client implements Runnable {
 
         for (int i = 0; i < bytes.length; i += PACKET_CHUNK_SIZE - 8) {
             byte[] extracted = new byte[Math.min(PACKET_CHUNK_SIZE, bytes.length - i + 8)];
-            byte[] packetIndexBytes = ByteBuffer.allocate(4).putInt(packet + chunk).array();
+            byte[] packetIndexBytes = ByteBuffer.allocate(4).putInt(packet).array();
             byte[] chunkBytes = ByteBuffer.allocate(4).putInt(chunk).array();
 
             for (int j = 0; j < extracted.length; j++) {
@@ -96,12 +105,14 @@ public class Client implements Runnable {
                 }
             }
 
-            // System.out.println(new String(extracted, StandardCharsets.UTF_8));
+            // System.out.println(" XXXXX " + new String(extracted,
+            // StandardCharsets.UTF_8));
+            // System.out.println("packing packet " + chunk + packet);
 
-            packets[packet++] = new DatagramPacket(extracted, extracted.length, address, _port);
+            packets[packet++] = new DatagramPacket(extracted, extracted.length, _address, _port);
         }
 
-        System.out.println("packed chunk, packets: " + packet);
+        // System.out.println("packed chunk, packets: " + packet);
 
         return packets;
     }
@@ -117,7 +128,7 @@ public class Client implements Runnable {
         try {
             if (file.length() == 0) {
                 // empty file
-                throw new FileNotFoundException("the file: " + THE_FILE_NAME + " is empty");
+                throw new FileNotFoundException("the file: " + _fileName + " is empty");
             }
 
             int chunkIndex = 0;
@@ -128,18 +139,20 @@ public class Client implements Runnable {
             byte[] allBytes = Files.readAllBytes(file.toPath());
 
             int offset = 0;
+            int i = Math.min(allBytes.length, windowByteSize);
 
-            for (int i = Math.min((allBytes.length - offset) - 1, windowByteSize); i < allBytes.length; i += Math
-                    .min(allBytes.length - offset, windowByteSize)) {
-                DatagramPacket[] packets = packChunk(Arrays.copyOfRange(allBytes, offset, offset + i), ++part);
+            do {
+                DatagramPacket[] packets = packChunk(Arrays.copyOfRange(allBytes, offset, i), ++part);
 
                 if (packets != null) {
                     parts.put(++chunkIndex, packets);
                 }
-                offset = i;
-            }
 
-            System.out.println("file packed, chunks: " + chunkIndex + ", packets: " + part);
+                offset = i;
+                i += Math.min(allBytes.length - offset, windowByteSize);
+            } while (offset < allBytes.length);
+
+            System.out.println("\nfile packed, chunks: " + chunkIndex);
 
             return parts;
 
@@ -156,7 +169,7 @@ public class Client implements Runnable {
         if (chunk != null && _socket != null && !_socket.isClosed()) {
             for (DatagramPacket packet : chunk) {
                 if (packet != null) {
-                    System.out.println("sending packet, chunk: " + chunk + " size: " + packet.getLength());
+                    // System.out.println("sending packet, size: " + packet.getLength());
                     _socket.send(packet);
                 } else {
                     System.out.println("could not send packet");
@@ -168,14 +181,17 @@ public class Client implements Runnable {
     }
 
     public void onResendNeeded(int chunk) {
-        WINDOW_GAP += 2;
+        WINDOW_GAP *= 0.1;
+        _lostPacket = true;
         try {
             if (chunk == 0) {
+                System.out.println("resending metadata package");
                 DatagramPacket[] packets = { prepareMetadataPackage() };
                 sendChunk(packets);
             } else {
                 DatagramPacket[] packets = _chunks.get(chunk);
                 if (packets != null) {
+                    System.out.println("resending chunk: " + chunk);
                     sendChunk(packets);
                 } else {
                     System.out.println("no chunk of index: " + chunk);
@@ -188,8 +204,8 @@ public class Client implements Runnable {
 
     @Override
     public void run() {
-        System.out.println("sending file: " + THE_FILE_NAME);
-        _file = new File(THE_FILE_NAME);
+        System.out.println("sending file: " + _fileName);
+        _file = new File(_fileName);
         long size = _file.length();
 
         if (!_file.exists()) {
@@ -213,12 +229,12 @@ public class Client implements Runnable {
 
             for (DatagramPacket[] windowChunk : _chunks.values()) {
                 // System.out.println("sending chunk, packets: " + windowChunk.length);
-                acker.expect(chunk++);
                 sendChunk(windowChunk);
+                acker.expect(chunk++);
                 Thread.sleep(WINDOW_GAP);
             }
 
-            System.out.println("file sent. size: " + size + ", chunks: " + (_chunks.size()));
+            System.out.println("file sent. size: " + size + ", chunks: " + _chunks.size());
 
         } catch (IOException e) {
             System.out.println(e.getMessage());

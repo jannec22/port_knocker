@@ -8,11 +8,13 @@ public class Server {
     private static ArrayList<Integer> unlockSequence;
     private static ArrayList<Integer> ports;
     private static HashMap<String, Integer> knockers = new HashMap<>();
+    private static String _filename;
 
     private static void printHelp() {
         System.out.println( //
                 "Port Knocking Server:\n\nUsage:\n" //
-                        + "   -p --ports <1024+> <1024+> ...    listen on given ports, unlock sequence: ports sorted in given order\n\n" //
+                        + "   -p --ports <1024+> <1024+> ...    listen on given ports, unlock sequence: ports sorted in given order\n" //
+                        + "   -f --file <file name>    file to serve\n\n" //
         );
     }
 
@@ -22,7 +24,7 @@ public class Server {
 
         if (validateSequence(origin, port)) {
             try {
-                (new Thread(new Client(origin))).start();
+                (new Thread(new Client(origin, _filename))).start();
 
             } catch (SocketException e) {
                 System.out.println("ERR: could not connect with the client");
@@ -78,7 +80,7 @@ public class Server {
 
     public static void main(String[] args) {
         unlockSequence = new ArrayList<>(args.length);
-        ports = new ArrayList<>(args.length);
+        ports = new ArrayList<>(args.length - 1);
         boolean readingPorts = false;
 
         try {
@@ -97,10 +99,20 @@ public class Server {
                     }
                 }
 
+                if (args[i].equals("-f") || args[i].equals("--file")) {
+                    if (args.length >= i + 1) {
+                        _filename = args[i + 1];
+                    } else {
+                        throw new Exception("ERR: not enaugh arguments");
+                    }
+                }
+
                 if (args[i].equals("-p") || args[i].equals("--ports")) {
                     readingPorts = true;
                 }
             }
+
+            if(_filename == null || _filename.isEmpty()) throw new Exception("ERR: you need to specify the file name");
 
             if (ports.size() > 0) {
                 spawnListeners();

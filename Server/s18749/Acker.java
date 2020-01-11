@@ -5,7 +5,7 @@ import java.util.HashMap;
 
 public class Acker {
     private static int NACKERS_COUNT = 3;
-    private static final long CHUNK_TIMEOUT = 10000;
+    private static final long CHUNK_TIMEOUT = 1000;
     private AckListener[] _listeners;
     private Client _client;
     private DatagramSocket _socket;
@@ -62,9 +62,10 @@ public class Acker {
 
     public synchronized void onAck(int chunk) {
         AckTimer timer = _timers.get(chunk);
+        _client.onAck();
 
         if (timer != null) {
-            System.out.println("acked " + chunk + " chunk");
+            // System.out.println("acked " + chunk + " chunk");
             timer.stop();
             _timers.put(chunk, null);
         } else {

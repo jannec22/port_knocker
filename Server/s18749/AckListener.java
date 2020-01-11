@@ -3,7 +3,8 @@ package s18749;
 import java.io.IOException;
 import java.net.DatagramPacket;
 import java.net.SocketTimeoutException;
-import java.nio.charset.StandardCharsets;
+import java.nio.ByteBuffer;
+import java.util.Arrays;
 
 public class AckListener implements Runnable {
     private Acker _acker;
@@ -39,33 +40,27 @@ public class AckListener implements Runnable {
             _acker.getSocket().setSoTimeout(1000);
 
             while (!_acked) {
-                extracted = new byte[4]; // int -> 4 bytes
+                extracted = new byte[5];
                 DatagramPacket rcv = new DatagramPacket(extracted, extracted.length);
 
                 // System.out.println(_thread.getId() + " waiting for ack's");
                 _acker.getSocket().receive(rcv);
                 // System.out.println("got new ack");
-                String dataString = new String(extracted, StandardCharsets.UTF_8);
-                String[] data = dataString.split("::");
 
-                if (data.length == 2) {
-                    int chunk;
+                ByteBuffer wrapped = ByteBuffer.wrap(Arrays.copyOfRange(extracted, 1, 5));
+                char type = (char) extracted[0];
+                int chunk = wrapped.getInt();
 
-                    try {
-                        chunk = Integer.parseInt(data[1]);
+                try {
 
-                        if (data[0].equals("a")) {
-                            _acker.onAck(chunk);
-                        } else {
-                            _acker.onNAck(chunk);
-                        }
-
-                    } catch (NumberFormatException e) {
-                        System.out.println("received ack has illformated chunk id: " + data[1]);
+                    if (type == 'a') {
+                        _acker.onAck(chunk);
+                    } else {
+                        _acker.onNAck(chunk);
                     }
 
-                } else {
-                    System.out.println("received ack is illformated: " + dataString);
+                } catch (NumberFormatException e) {
+                    System.out.println("received ack has illformated chunk id: " + chunk);
                 }
             }
 

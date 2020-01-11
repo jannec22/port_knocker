@@ -14,23 +14,25 @@ public class UdpFileReader implements Runnable {
     private DatagramSocket _socket;
     private byte[] _extracted;
     private Thread _thread;
-    private UdpFile _udpFile;
-    private InetAddress _address;
-    private int _port;
 
-    private int _percent = 0;
-    private int _lastPercent = -1;
-    private int _packetSize = 65535;
-    private int _chunkSize = 100;
-    private int _expectedBytes = 0;
-    private int _extractedBytes = 0;
-    private int _expectedChunks = 1;
-    private int _completedChunks = 0;
-    private HashMap<Integer, HashMap<Integer, byte[]>> _chunks = new HashMap<>();
+    private volatile String _fileName = "noname.txt";
+    private volatile HashMap<Integer, Chunk> _chunks = new HashMap<>();
 
-    UdpFileReader(UdpFile file) {
-        _socket = file.getSocket();
-        _udpFile = file;
+    private volatile InetAddress _address;
+    private volatile int _port;
+    private volatile int _packetsReceived;
+    private volatile boolean _ready = false;
+
+    private volatile int _percent = 0;
+    private volatile int _lastPercent = -1;
+    private volatile int _packetSize = 65535;
+    private volatile int _chunkSize = 5;
+    private volatile int _expectedBytes = 0;
+    private volatile int _extractedBytes = 0;
+    private volatile int _expectedChunks = 1;
+
+    UdpFileReader(DatagramSocket socket) {
+        _socket = socket;
         _thread = new Thread(this);
     }
 
@@ -38,25 +40,81 @@ public class UdpFileReader implements Runnable {
         _thread.start();
     }
 
-    public void interrupt() {
-        _thread.interrupt();
-        _socket.close();
+    public void join() {
+        try {
+            _thread.join();
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
     }
 
-    public void join() throws InterruptedException {
-        if (_thread != null) {
-            _thread.join();
+    public boolean loaded() {
+        return _ready;
+    }
+
+    public HashMap<Integer, Chunk> getChunks() {
+        return _chunks;
+    }
+
+    public String getFilename() {
+        return _fileName;
+    }
+
+    public void setMetadata(int[] attrs) {
+        _expectedBytes = attrs[1];
+        _chunkSize = attrs[2];
+        _packetSize = attrs[3];
+        _expectedChunks = attrs[4];
+        System.out.println("\nexpected bytes: " + _expectedBytes);
+        System.out.println("chunk size: " + _chunkSize);
+        System.out.println("packet size: " + _packetSize);
+        System.out.println("expected chunks: " + _expectedChunks + "\n");
+    }
+
+    public void onProgress(int length) {
+        _lastPercent = _percent;
+        _extractedBytes += length;
+        ++_packetsReceived;
+        if (_expectedBytes != 0)
+            _percent = _extractedBytes * 100 / _expectedBytes;
+
+        if (_percent != _lastPercent || _percent == 0) {
+            System.out.print("\r[");
+            for (int i = 0; i < 20; i++) {
+                if (i <= _percent / 5) {
+                    System.out.print(".");
+                } else {
+                    System.out.print(" ");
+                }
+            }
+            System.out.print("] " + _percent + "% " + "chunks: " + _chunks.size() + " packets: " + _packetsReceived);
         }
+    }
+
+    private byte[] createAckData(boolean ack, int chunk) {
+        byte[] type = (ack ? "a" : "n").getBytes();
+        byte[] chunkBytes = ByteBuffer.allocate(4).putInt(chunk).array();
+        byte[] bytes = new byte[type.length + chunkBytes.length];
+
+        for (int i = 0; i < bytes.length; i++) {
+            if (i < type.length) {
+                bytes[i] = type[i];
+            } else {
+                bytes[i] = chunkBytes[i - type.length];
+            }
+        }
+
+        return bytes;
     }
 
     private void sendAck(int chunk) {
         if (_socket.isClosed())
             return; // file received
-        byte[] bytes = ("a::" + chunk).getBytes();
+
+        byte[] bytes = createAckData(true, chunk);
         DatagramPacket packet = new DatagramPacket(bytes, bytes.length, _address, _port);
 
         try {
-            System.out.println("sending ack for chunk: " + chunk);
             _socket.send(packet);
         } catch (IOException e) {
             e.printStackTrace();
@@ -66,7 +124,8 @@ public class UdpFileReader implements Runnable {
     private void sendNAck(int chunk) {
         if (_socket.isClosed())
             return; // file received
-        byte[] bytes = ("n::" + chunk).getBytes();
+
+        byte[] bytes = createAckData(false, chunk);
         DatagramPacket packet = new DatagramPacket(bytes, bytes.length, _address, _port);
 
         try {
@@ -81,34 +140,34 @@ public class UdpFileReader implements Runnable {
         String metadata = new String(data, 0, data.length, StandardCharsets.UTF_8);
         String[] attrs = metadata.split("::");
 
-        if (attrs.length == 4) {
-            _udpFile.setFilename(attrs[0].replaceAll("[^a-zA-Z0-9\\._]+", ""));
+        if (attrs.length == 5) {
+            _fileName = attrs[0].replaceAll("[^a-zA-Z0-9\\._]+", "");
 
             try {
-                _expectedBytes = Integer.parseInt(attrs[1].trim());
-                System.out.println("\nexpected bytes: " + _expectedBytes);
-                _chunkSize = Integer.parseInt(attrs[2].trim());
-                System.out.println("chunk size: " + _chunkSize);
-                _packetSize = Integer.parseInt(attrs[3].trim());
-                System.out.println("packet size: " + _packetSize + "\n");
+                int[] attrsInt = new int[attrs.length];
+
+                for (int i = 1; i < attrsInt.length; ++i) {
+                    attrsInt[i] = Integer.parseInt(attrs[i]);
+                }
+
+                setMetadata(attrsInt);
 
                 sendAck(0);
             } catch (NumberFormatException e) {
                 System.out.println("metadata packet file size or part size is not a valid number: [" + attrs[1] + " or "
-                        + attrs[3] + "]");
+                        + attrs[2] + " or " + attrs[3] + " or " + attrs[4] + "]");
 
                 sendNAck(chunk);
                 return;
             }
 
-            _expectedChunks = Math.round(_expectedBytes / (_packetSize - 4)) + 1; // 4 is the part number
+            System.out.println("file size (bytes): " + _expectedBytes + " extracted bytes: " + _extractedBytes
+                    + " chunks: " + _chunks.size());
 
-            System.out.println("file size (bytes): " + _expectedBytes + " part size: " + _packetSize + " chunks count: "
-                    + _expectedChunks);
-
-            if (_completedChunks >= _expectedChunks) {
+            if (_chunks.size() >= _expectedChunks && _expectedChunks != 0) {
                 System.out.println("metadata packet arrived as the last packet, interuppting readers");
-                _udpFile.ready();
+                _thread.interrupt();
+                _ready = true;
             }
 
         } else {
@@ -119,56 +178,59 @@ public class UdpFileReader implements Runnable {
     }
 
     private void handleData(int part, int chunk, byte[] data) {
-        // System.out.println("data packet arrived: " + new String(data,
-        // StandardCharsets.UTF_8));
-        _lastPercent = _percent;
-        if (_expectedBytes != 0)
-            _percent = _extractedBytes * 100 / _expectedBytes;
-        _extractedBytes += data.length;
-
-        if (_expectedBytes != 0 && _percent != _lastPercent) {
-            System.out.print("\r[");
-            for (int i = 0; i < 20; i++) {
-                if (i <= _percent / 5) {
-                    System.out.print(".");
-                } else {
-                    System.out.print(" ");
-                }
-            }
-            System.out.print("] " + _percent + "% " + part + " packets received");
+        if (data == null) {
+            sendNAck(chunk);
+            return;
         }
 
-        HashMap<Integer, byte[]> byteChunk = _chunks.get(chunk);
+        Chunk byteChunk = _chunks.get(chunk - 1);
 
         if (byteChunk == null) {
-            byteChunk = new HashMap<>();
+            byteChunk = new Chunk(chunk);
         }
 
-        System.out.println("\nexpected bytes: " + _expectedBytes + ", extracted bytes: " + _extractedBytes);
-        if (byteChunk.size() == _chunkSize || (_expectedBytes != 0 && _expectedBytes <= _extractedBytes)) { // completed
-                                                                                                            // chunk
-            sendAck(chunk);
-            _completedChunks++;
+        byteChunk.addPart(part, data);
+        _chunks.put(chunk - 1, byteChunk); // chunks starts from 1 because metadata has chunk 0
+        onProgress(data.length);
+
+        if (byteChunk.size() >= _chunkSize || (_expectedBytes != 0 && _expectedBytes <= _extractedBytes)) { // completed
+            // chunk
+            if (!byteChunk.getCompleted()) {
+                if (byteChunk.checkIntegrity(_chunkSize)) {
+                    byteChunk.setCompleted(true);
+                    sendAck(chunk);
+                } else {
+                    System.out.println("chunk is not ready");
+                    sendNAck(chunk);
+                }
+            }
         }
-
-        byteChunk.put(part, data);
-        _chunks.put(chunk, byteChunk);
-
-        System.out.println("chunk size: " + byteChunk.size() + ", completed chunks: " + _completedChunks);
     }
 
     private void handlePacket(DatagramPacket packet) {
+        if (packet.getLength() < 8) {
+            System.out.println(
+                    "received packet(size: " + packet.getLength() + ") does not contain packet and chunk number: "
+                            + new String(packet.getData(), StandardCharsets.UTF_8));
+            return;
+        }
+
         ByteBuffer wrappedPart = ByteBuffer.wrap(Arrays.copyOfRange(packet.getData(), 0, 4));
         ByteBuffer wrappedChunk = ByteBuffer.wrap(Arrays.copyOfRange(packet.getData(), 4, 8));
         byte[] data = Arrays.copyOfRange(packet.getData(), 8, packet.getLength());
 
         int packetNumber = wrappedPart.getInt();
         int chunk = wrappedChunk.getInt();
-        HashMap<Integer, byte[]> chunkExists = _chunks.get(chunk);
+        // Chunk chunkExists = _chunks.get(chunk);
 
-        if (chunkExists != null && chunkExists.get(packetNumber) != null) {
-            return; // drop duplicated packet
-        }
+        // if (chunkExists != null) {
+        //     byte[] packetExists = chunkExists.get(packetNumber);
+
+        //     if (packetExists != null && packetExists.equals(data)) {
+        //         System.out.println("dropping duplicated packet " + packetNumber);
+        //         return; // drop duplicated packet
+        //     }
+        // }
 
         if (_address == null) {
             _address = packet.getAddress();
@@ -185,11 +247,9 @@ public class UdpFileReader implements Runnable {
             e.printStackTrace();
         }
 
-        System.out.println("packet(" + packetNumber + ") arrived, chunk(" + chunk + "), chunks: " + _completedChunks
-                + "/" + _expectedChunks);
-        if (_completedChunks >= _expectedChunks) {
-            System.out.println("file is ready");
-            _udpFile.ready();
+        if (_expectedChunks <= _chunks.size() && _expectedChunks != 1) {
+            System.out.println("\nfile is ready");
+            _ready = true;
         }
     }
 
@@ -197,21 +257,22 @@ public class UdpFileReader implements Runnable {
     public void run() {
         System.out.println("spawning udp file reader");
         try {
-            _socket.setSoTimeout(5000);
+            _socket.setSoTimeout(10000);
 
-            while (_expectedChunks == 0 || _completedChunks < _expectedChunks) {
+            while (!_ready && !_thread.isInterrupted()) {
                 _extracted = new byte[_packetSize];
                 DatagramPacket rcv = new DatagramPacket(_extracted, _extracted.length);
 
                 _socket.receive(rcv);
-                handlePacket(rcv);
+                if (!_ready) {
+                    handlePacket(rcv);
+                }
             }
 
         } catch (SocketTimeoutException e) {
+            System.out.println("could not receive package, connection timed out");
         } catch (IOException e) {
-            // ignore, will occur when metadata package arrives as the last packet
-            // then the handle packet thread will interrupt the receive method by closing
-            // the _socket
+            // will occur when metadata package is last
         }
     }
 

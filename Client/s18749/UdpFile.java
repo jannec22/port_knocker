@@ -69,7 +69,7 @@ public class UdpFile {
 
             DataOutputStream stream = new DataOutputStream(new FileOutputStream(_file));
             HashMap<Integer, Chunk> chunks = _reader.getChunks();
-            System.out.println(chunks);
+            // System.out.println(chunks);
 
             for (int i = 0; i < chunks.size(); i++) {
                 Chunk chunk = chunks.get(i);

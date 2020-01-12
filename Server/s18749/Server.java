@@ -2,6 +2,8 @@ package s18749;
 
 import java.net.SocketException;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 
 public class Server {
@@ -9,12 +11,15 @@ public class Server {
     private static ArrayList<Integer> ports;
     private static HashMap<String, Integer> knockers = new HashMap<>();
     private static String _filename;
+    private static final String DEFAULT_FILE_NAME = "24Mfile";
 
     private static void printHelp() {
         System.out.println( //
                 "Port Knocking Server:\n\nUsage:\n" //
                         + "   -p --ports <1024+> <1024+> ...    listen on given ports, unlock sequence: ports sorted in given order\n" //
                         + "   -f --file <file name>    file to serve\n\n" //
+                        + "Or:\n" //
+                        + "   <1024+> <1024+> ...   listen on given ports wit the given order and serve default file\n\n" //
         );
     }
 
@@ -84,35 +89,46 @@ public class Server {
         boolean readingPorts = false;
 
         try {
-            for (int i = 0; i < args.length; ++i) {
-                if (readingPorts) {
-                    int port = Integer.parseInt(args[i]);
 
-                    if (port < 1024) {
-                        throw new Exception("ERR: " + args[i] + " is not a valid port number");
+            if (!Collections.disjoint(Arrays.asList(args),
+                    Arrays.asList(new String[] { "-p", "-f", "--ports", "--file" }))) {
+                for (int i = 0; i < args.length; ++i) {
+                    if (readingPorts) {
+                        int port = Integer.parseInt(args[i]);
+
+                        if (port < 1024) {
+                            throw new Exception("ERR: " + args[i] + " is not a valid port number");
+                        }
+
+                        unlockSequence.add(port);
+
+                        if (!ports.contains(port)) {
+                            ports.add(port);
+                        }
                     }
 
-                    unlockSequence.add(port);
+                    if (args[i].equals("-f") || args[i].equals("--file")) {
+                        if (args.length >= i + 1) {
+                            _filename = args[i + 1];
+                        } else {
+                            throw new Exception("ERR: not enaugh arguments");
+                        }
+                    }
 
-                    if (!ports.contains(port)) {
-                        ports.add(port);
+                    if (args[i].equals("-p") || args[i].equals("--ports")) {
+                        readingPorts = true;
                     }
                 }
 
-                if (args[i].equals("-f") || args[i].equals("--file")) {
-                    if (args.length >= i + 1) {
-                        _filename = args[i + 1];
-                    } else {
-                        throw new Exception("ERR: not enaugh arguments");
-                    }
-                }
+                if (_filename == null || _filename.isEmpty())
+                    throw new Exception("ERR: you need to specify the file name");
+            } else {
+                _filename = DEFAULT_FILE_NAME;
 
-                if (args[i].equals("-p") || args[i].equals("--ports")) {
-                    readingPorts = true;
+                for (String port : args) {
+                    ports.add(Integer.parseInt(port));
                 }
             }
-
-            if(_filename == null || _filename.isEmpty()) throw new Exception("ERR: you need to specify the file name");
 
             if (ports.size() > 0) {
                 spawnListeners();

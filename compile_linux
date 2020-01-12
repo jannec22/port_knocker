@@ -23,11 +23,6 @@ if [[ "$TARGET" == "server" ]]; then
 	dd if=/dev/zero of=16Mfile bs=16M count=1
 	dd if=/dev/zero of=24Mfile bs=24M count=1
 	dd if=/dev/zero of=64Mfile bs=64M count=1
-
-	echo "at least 2 MB file" >> 2Mfile
-	echo "at least 16 MB file" >> 16Mfile
-	echo "at least 24 MB file" >> 24Mfile
-	echo "at least 64 MB file" >> 64Mfile
 	
 	cd "$WORKING_DIR/Server/s18749"
 	

@@ -15,20 +15,20 @@ public class UdpFileReader implements Runnable {
     private byte[] _extracted;
     private Thread _thread;
 
-    private volatile String _fileName = "noname.txt";
+    private String _fileName = "noname.txt";
     private volatile HashMap<Integer, Chunk> _chunks = new HashMap<>();
 
-    private volatile InetAddress _address;
-    private volatile int _port;
-    private volatile int _packetsReceived;
+    private InetAddress _address;
+    private int _port;
+    private int _packetsReceived;
     private volatile boolean _ready = false;
 
     private volatile int _percent = 0;
     private volatile int _lastPercent = -1;
     private volatile int _packetSize = 65535;
     private volatile int _chunkSize = 5;
-    private volatile int _expectedBytes = 0;
-    private volatile int _extractedBytes = 0;
+    private volatile long _expectedBytes = 0;
+    private volatile long _extractedBytes = 0;
     private volatile int _expectedChunks = 1;
 
     UdpFileReader(DatagramSocket socket) {
@@ -76,7 +76,7 @@ public class UdpFileReader implements Runnable {
         _extractedBytes += length;
         ++_packetsReceived;
         if (_expectedBytes != 0)
-            _percent = _extractedBytes * 100 / _expectedBytes;
+            _percent = (int)(_extractedBytes * 100 / _expectedBytes);
 
         if (_percent != _lastPercent || _percent == 0) {
             System.out.print("\r[");
@@ -91,27 +91,11 @@ public class UdpFileReader implements Runnable {
         }
     }
 
-    private byte[] createAckData(boolean ack, int chunk) {
-        byte[] type = (ack ? "a" : "n").getBytes();
-        byte[] chunkBytes = ByteBuffer.allocate(4).putInt(chunk).array();
-        byte[] bytes = new byte[type.length + chunkBytes.length];
-
-        for (int i = 0; i < bytes.length; i++) {
-            if (i < type.length) {
-                bytes[i] = type[i];
-            } else {
-                bytes[i] = chunkBytes[i - type.length];
-            }
-        }
-
-        return bytes;
-    }
-
     private void sendAck(int chunk) {
         if (_socket.isClosed())
             return; // file received
 
-        byte[] bytes = createAckData(true, chunk);
+        byte[] bytes = "a".getBytes();
         DatagramPacket packet = new DatagramPacket(bytes, bytes.length, _address, _port);
 
         try {
@@ -125,7 +109,7 @@ public class UdpFileReader implements Runnable {
         if (_socket.isClosed())
             return; // file received
 
-        byte[] bytes = createAckData(false, chunk);
+        byte[] bytes = "n".getBytes();
         DatagramPacket packet = new DatagramPacket(bytes, bytes.length, _address, _port);
 
         try {
@@ -200,7 +184,7 @@ public class UdpFileReader implements Runnable {
                     byteChunk.setCompleted(true);
                     sendAck(chunk);
                 } else {
-                    System.out.println("chunk is not ready");
+                    // System.out.println("chunk is not ready");
                     sendNAck(chunk);
                 }
             }
